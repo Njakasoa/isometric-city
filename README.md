@@ -29,7 +29,7 @@ Made with [Cursor](https://cursor.com).
     -   **Economy & Resources**: Resource management, zoning (Residential, Commercial, Industrial), and city growth logic.
 -   **Interactive Grid**: Tile-based placement system for buildings, roads, rail, parks, utilities, and more.
 -   **State Management**: Save/Load functionality for cities.
--   **Responsive Design**: Mobile-friendly interface with touch controls, drawers, and toolbars.
+-   **Responsive Design**: Mobile-friendly interface with touch friendly controls, drawers, and toolbars.
 
 ## Tech Stack
 
