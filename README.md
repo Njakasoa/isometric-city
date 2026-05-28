@@ -1,6 +1,6 @@
 # IsoCity & IsoCoaster
 
-Open-source isometric city and theme park builder built with NextJS, TypeScript, and HTML5 Canvas. Deployed with Vercel.
+Open-source isometric city and theme park builder built with NextJS, TypeScript, and HTML5 Canvas.
 
 <table>
 <tr>
