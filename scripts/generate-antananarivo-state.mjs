@@ -27,6 +27,9 @@ const DEFAULT_BBOX = {
 
 const GRID_SIZE = 96;
 const BUILDING_LIMIT = 6500;
+const ELEVATION_SAMPLE_STEPS = 17;
+const ELEVATION_BATCH_SIZE = 90;
+const ELEVATION_ENDPOINT = 'https://api.open-meteo.com/v1/elevation';
 const CITY_ID = 'antananarivo-osm-core';
 const ROAD_HIGHWAYS = new Set([
   'motorway',
@@ -39,6 +42,27 @@ const ROAD_HIGHWAYS = new Set([
   'living_street',
   'service',
 ]);
+
+const LOWLAND_LANDUSES = new Set([
+  'farmland',
+  'farmyard',
+  'meadow',
+  'orchard',
+  'plant_nursery',
+  'allotments',
+  'village_green',
+]);
+
+const MAP_LABELS = [
+  { id: 'label-soarano', name: 'Soarano', lat: -18.9024, lon: 47.5227, kind: 'station', priority: 1 },
+  { id: 'label-analakely', name: 'Analakely', lat: -18.9073, lon: 47.5238, kind: 'district', priority: 1 },
+  { id: 'label-lac-anosy', name: 'Lac Anosy', lat: -18.9144, lon: 47.5211, kind: 'water', priority: 1 },
+  { id: 'label-mahamasina', name: 'Mahamasina', lat: -18.9194, lon: 47.5213, kind: 'landmark', priority: 1 },
+  { id: 'label-haute-ville', name: 'Haute Ville', lat: -18.9198, lon: 47.5292, kind: 'ridge', priority: 1 },
+  { id: 'label-rova', name: 'Rova', lat: -18.9237, lon: 47.5323, kind: 'landmark', priority: 1 },
+  { id: 'label-ankatso', name: 'Ankatso', lat: -18.9045, lon: 47.5390, kind: 'district', priority: 2 },
+  { id: 'label-rizieres-ouest', name: 'Rizieres ouest', lat: -18.9140, lon: 47.5058, kind: 'lowland', priority: 2 },
+];
 
 const ENDPOINTS = [
   process.env.OVERPASS_ENDPOINT,
@@ -207,6 +231,11 @@ function paintTile(grid, x, y, type, options = {}) {
 
   tile.building = makeBuilding(type, `${x}:${y}:${type}`);
   tile.zone = options.zone ?? tile.zone;
+  if (options.surface) {
+    tile.surface = options.surface;
+  } else if (type === 'water') {
+    tile.surface = 'water';
+  }
   tile.landValue = Math.max(10, 50 + (BUILDING_STATS[type]?.landValue ?? 0));
   return true;
 }
@@ -218,6 +247,52 @@ function paintLine(grid, points, type, width = 0) {
         for (let ox = -width; ox <= width; ox++) {
           paintTile(grid, tile.x + ox, tile.y + oy, type, { preserveWater: type !== 'water' });
         }
+      }
+    }
+  }
+}
+
+function markSurface(grid, x, y, surface, options = {}) {
+  const tile = grid[y]?.[x];
+  if (!tile) return false;
+  if (options.preserveTransport && ['road', 'rail'].includes(tile.building.type)) return false;
+  if (options.preserveWater && tile.building.type === 'water') return false;
+  tile.surface = surface;
+  return true;
+}
+
+function markLineSurface(grid, points, surface, width = 0) {
+  for (let i = 1; i < points.length; i++) {
+    for (const tile of lineTiles(points[i - 1], points[i])) {
+      for (let oy = -width; oy <= width; oy++) {
+        for (let ox = -width; ox <= width; ox++) {
+          markSurface(grid, tile.x + ox, tile.y + oy, surface, { preserveWater: true });
+        }
+      }
+    }
+  }
+}
+
+function paintEllipse(grid, center, radiusX, radiusY, callback) {
+  for (let y = Math.floor(center.y - radiusY); y <= Math.ceil(center.y + radiusY); y++) {
+    for (let x = Math.floor(center.x - radiusX); x <= Math.ceil(center.x + radiusX); x++) {
+      const dx = (x - center.x) / radiusX;
+      const dy = (y - center.y) / radiusY;
+      if (dx * dx + dy * dy <= 1) {
+        callback(x, y, Math.sqrt(dx * dx + dy * dy));
+      }
+    }
+  }
+}
+
+function paintEllipseRing(grid, center, radiusX, radiusY, thickness, type) {
+  for (let y = Math.floor(center.y - radiusY - thickness); y <= Math.ceil(center.y + radiusY + thickness); y++) {
+    for (let x = Math.floor(center.x - radiusX - thickness); x <= Math.ceil(center.x + radiusX + thickness); x++) {
+      const dx = (x - center.x) / radiusX;
+      const dy = (y - center.y) / radiusY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      if (Math.abs(distance - 1) <= thickness / Math.max(radiusX, radiusY)) {
+        paintTile(grid, x, y, type, { preserveWater: true });
       }
     }
   }
@@ -316,10 +391,23 @@ function applyLanduse(grid, element) {
     return;
   }
 
+  if (tags.natural === 'wetland' || LOWLAND_LANDUSES.has(tags.landuse)) {
+    const surface = tags.natural === 'wetland' ? 'wetland' : 'rice';
+    fillPolygon(grid, polygon, (x, y) => {
+      const tile = grid[y]?.[x];
+      if (!tile || ['water', 'road', 'rail'].includes(tile.building.type)) return;
+      markSurface(grid, x, y, surface);
+      if (['grass', 'tree'].includes(tile.building.type)) {
+        paintTile(grid, x, y, 'grass', { preserveTransport: true, preserveWater: true, surface });
+      }
+    });
+    return;
+  }
+
   if (tags.leisure === 'park' || tags.leisure === 'garden' || tags.leisure === 'playground' || tags.landuse === 'grass') {
     fillPolygon(grid, polygon, (x, y) => {
       const roll = stableHash(`${element.id}:${x}:${y}`) % 100;
-      paintTile(grid, x, y, roll < 15 ? 'park' : roll < 45 ? 'tree' : 'grass', { preserveTransport: true });
+      paintTile(grid, x, y, roll < 15 ? 'park' : roll < 45 ? 'tree' : 'grass', { preserveTransport: true, surface: 'park' });
     });
     return;
   }
@@ -347,6 +435,7 @@ function applyLanduse(grid, element) {
       const tile = grid[y]?.[x];
       if (tile && !['water', 'road', 'rail'].includes(tile.building.type)) {
         tile.zone = zone;
+        tile.surface = tile.surface || 'urban';
       }
     });
   }
@@ -366,12 +455,18 @@ function applyContext(grid, elements) {
     const points = element.geometry.map((point) => toGrid(point.lat, point.lon));
 
     if (tags.waterway) {
-      paintLine(grid, points, 'water', tags.waterway === 'river' ? 1 : 0);
+      if (tags.waterway === 'river' || tags.waterway === 'canal') {
+        paintLine(grid, points, 'water', tags.waterway === 'river' ? 1 : 0);
+      } else {
+        markLineSurface(grid, points, 'wetland');
+      }
     } else if (tags.railway) {
       paintLine(grid, points, 'rail');
     } else if (tags.highway) {
       if (!ROAD_HIGHWAYS.has(tags.highway)) continue;
-      if (tags.highway === 'service' && stableHash(element.id) % 100 > 35) continue;
+      if (tags.highway === 'service' && stableHash(element.id) % 100 > 10) continue;
+      if (tags.highway === 'residential' && stableHash(element.id) % 100 > 45) continue;
+      if (['unclassified', 'living_street'].includes(tags.highway) && stableHash(element.id) % 100 > 70) continue;
       paintLine(grid, points, 'road');
     }
   }
@@ -406,12 +501,58 @@ function applyContext(grid, elements) {
 
 function applyManualLake(grid) {
   const center = toGrid(-18.9144, 47.5211);
-  for (let y = center.y - 5; y <= center.y + 5; y++) {
-    for (let x = center.x - 7; x <= center.x + 7; x++) {
-      const dx = (x - center.x) / 7;
-      const dy = (y - center.y) / 5;
-      if (dx * dx + dy * dy <= 1) {
-        paintTile(grid, x, y, 'water');
+  paintEllipse(grid, center, 7, 5, (x, y) => paintTile(grid, x, y, 'water'));
+  paintEllipseRing(grid, center, 8.5, 6.2, 1.2, 'road');
+}
+
+function paintNamedPath(grid, coordinates, type = 'road', width = 0) {
+  paintLine(
+    grid,
+    coordinates.map(([lat, lon]) => toGrid(lat, lon)),
+    type,
+    width,
+  );
+}
+
+function applyRecognizableAxes(grid) {
+  paintNamedPath(grid, [
+    [-18.9024, 47.5227],
+    [-18.9062, 47.5230],
+    [-18.9085, 47.5251],
+  ], 'road', 1);
+
+  paintNamedPath(grid, [
+    [-18.9085, 47.5251],
+    [-18.9120, 47.5220],
+    [-18.9144, 47.5211],
+    [-18.9194, 47.5213],
+  ], 'road');
+
+  paintNamedPath(grid, [
+    [-18.9085, 47.5251],
+    [-18.9145, 47.5278],
+    [-18.9198, 47.5292],
+    [-18.9237, 47.5323],
+  ], 'road');
+
+  paintNamedPath(grid, [
+    [-18.9024, 47.5227],
+    [-18.9018, 47.5260],
+    [-18.9028, 47.5310],
+    [-18.9045, 47.5390],
+  ], 'rail');
+}
+
+function applyLowlandHints(grid) {
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      const tile = grid[y][x];
+      if (!['grass', 'tree'].includes(tile.building.type)) continue;
+      const { lon, lat } = fromGrid(x, y);
+      const westPlain = lon < 47.512 && lat < -18.898;
+      const northPlain = lat > -18.899 && lon < 47.526;
+      if (westPlain || northPlain) {
+        tile.surface = tile.surface || 'rice';
       }
     }
   }
@@ -455,6 +596,8 @@ function applyBuildings(grid, elements) {
 
 function applyLandmarks(grid) {
   applyManualLake(grid);
+  applyRecognizableAxes(grid);
+  applyLowlandHints(grid);
   for (const landmark of LANDMARKS) {
     if (landmark.type === 'water') continue;
     const { x, y } = toGrid(landmark.lat, landmark.lon);
@@ -493,7 +636,8 @@ function buildWaterBodies(grid) {
       if (tiles.length < 4) continue;
       const centerX = Math.round(tiles.reduce((sum, tile) => sum + tile.x, 0) / tiles.length);
       const centerY = Math.round(tiles.reduce((sum, tile) => sum + tile.y, 0) / tiles.length);
-      const nearAnosy = Math.hypot(centerX - lacAnosy.x, centerY - lacAnosy.y) < 8;
+      const nearAnosy = tiles.some((tile) => Math.hypot(tile.x - lacAnosy.x, tile.y - lacAnosy.y) < 3) ||
+        Math.hypot(centerX - lacAnosy.x, centerY - lacAnosy.y) < 9;
       bodies.push({
         id: `antananarivo-water-${bodies.length}`,
         name: nearAnosy ? 'Lac Anosy' : bodies.length === 0 ? 'Canaux de Tana' : 'Eaux urbaines',
@@ -505,7 +649,197 @@ function buildWaterBodies(grid) {
     }
   }
 
+  bodies.sort((a, b) => {
+    if (a.name === 'Lac Anosy') return -1;
+    if (b.name === 'Lac Anosy') return 1;
+    return b.tiles.length - a.tiles.length;
+  });
   return bodies.slice(0, 6);
+}
+
+function buildMapLabels() {
+  return MAP_LABELS.map((label) => {
+    const { x, y } = toGrid(label.lat, label.lon);
+    return {
+      id: label.id,
+      name: label.name,
+      kind: label.kind,
+      priority: label.priority,
+      x,
+      y,
+    };
+  });
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function gaussian(lat, lon, centerLat, centerLon, latScale, lonScale, gain) {
+  const dy = (lat - centerLat) / latScale;
+  const dx = (lon - centerLon) / lonScale;
+  return gain * Math.exp(-(dx * dx + dy * dy));
+}
+
+function fallbackElevation(lat, lon) {
+  const eastSlope = clamp((lon - 47.506) / 0.032, 0, 1) * 55;
+  const southSlope = clamp((-18.900 - lat) / 0.026, 0, 1) * 18;
+
+  return 1240 + eastSlope + southSlope
+    + gaussian(lat, lon, -18.9237, 47.5323, 0.0045, 0.0048, 130)
+    + gaussian(lat, lon, -18.9198, 47.5292, 0.0065, 0.0060, 72)
+    + gaussian(lat, lon, -18.9045, 47.5390, 0.0060, 0.0045, 35)
+    - gaussian(lat, lon, -18.9144, 47.5211, 0.0060, 0.0080, 42)
+    - gaussian(lat, lon, -18.9130, 47.5060, 0.0150, 0.0090, 28);
+}
+
+function buildElevationSamplePoints(steps = ELEVATION_SAMPLE_STEPS) {
+  const points = [];
+  for (let sy = 0; sy < steps; sy++) {
+    for (let sx = 0; sx < steps; sx++) {
+      const gridX = (sx / (steps - 1)) * (GRID_SIZE - 1);
+      const gridY = (sy / (steps - 1)) * (GRID_SIZE - 1);
+      const { lat, lon } = fromGrid(gridX, gridY);
+      points.push({ sx, sy, lat, lon });
+    }
+  }
+  return points;
+}
+
+async function fetchElevationLayer() {
+  const samples = [];
+  const points = buildElevationSamplePoints();
+
+  for (let start = 0; start < points.length; start += ELEVATION_BATCH_SIZE) {
+    const batch = points.slice(start, start + ELEVATION_BATCH_SIZE);
+    const params = new URLSearchParams({
+      latitude: batch.map((point) => point.lat.toFixed(5)).join(','),
+      longitude: batch.map((point) => point.lon.toFixed(5)).join(','),
+    });
+    const response = await fetch(`${ELEVATION_ENDPOINT}?${params.toString()}`, {
+      headers: { 'user-agent': 'tana-builder-elevation-generator/1.0' },
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(`${response.status} ${response.statusText}: ${text.slice(0, 180)}`);
+    }
+
+    const json = JSON.parse(text);
+    if (!Array.isArray(json.elevation) || json.elevation.length !== batch.length) {
+      throw new Error(`Unexpected elevation response for ${batch.length} points`);
+    }
+
+    for (let i = 0; i < batch.length; i++) {
+      samples.push({
+        ...batch[i],
+        elevation: Number(json.elevation[i]),
+      });
+    }
+  }
+
+  console.log(`elevation: fetched ${samples.length} DEM samples from Open-Meteo`);
+  return {
+    source: 'open-meteo',
+    endpoint: ELEVATION_ENDPOINT,
+    model: 'Copernicus DEM GLO-90',
+    steps: ELEVATION_SAMPLE_STEPS,
+    bbox: DEFAULT_BBOX,
+    fetchedAt: new Date().toISOString(),
+    samples,
+  };
+}
+
+async function loadElevationLayer({ cacheFile, inputFile, refresh, disabled }) {
+  if (disabled) {
+    console.log('elevation: disabled, using synthetic fallback');
+    return { source: 'synthetic-fallback', steps: 0, samples: [] };
+  }
+
+  if (inputFile) {
+    console.log(`elevation: reading ${inputFile}`);
+    return readJson(inputFile);
+  }
+
+  if (!refresh && existsSync(cacheFile)) {
+    console.log(`elevation: using cache ${cacheFile}`);
+    return readJson(cacheFile);
+  }
+
+  try {
+    const data = await fetchElevationLayer();
+    await mkdir(path.dirname(cacheFile), { recursive: true });
+    await writeFile(cacheFile, JSON.stringify(data, null, 2));
+    return data;
+  } catch (error) {
+    console.warn(`elevation: Open-Meteo failed, using synthetic fallback: ${error.message}`);
+    return { source: 'synthetic-fallback', steps: 0, samples: [] };
+  }
+}
+
+function elevationFromLayer(layer, x, y) {
+  const { lat, lon } = fromGrid(x, y);
+  if (!layer?.samples?.length || !layer.steps) {
+    return fallbackElevation(lat, lon);
+  }
+
+  const sampleX = (x / (GRID_SIZE - 1)) * (layer.steps - 1);
+  const sampleY = (y / (GRID_SIZE - 1)) * (layer.steps - 1);
+  const x0 = Math.floor(sampleX);
+  const y0 = Math.floor(sampleY);
+  const x1 = Math.min(layer.steps - 1, x0 + 1);
+  const y1 = Math.min(layer.steps - 1, y0 + 1);
+  const tx = sampleX - x0;
+  const ty = sampleY - y0;
+  const at = (sx, sy) => layer.samples[sy * layer.steps + sx]?.elevation ?? fallbackElevation(lat, lon);
+  const e00 = at(x0, y0);
+  const e10 = at(x1, y0);
+  const e01 = at(x0, y1);
+  const e11 = at(x1, y1);
+
+  return (e00 * (1 - tx) + e10 * tx) * (1 - ty) + (e01 * (1 - tx) + e11 * tx) * ty;
+}
+
+function applyElevation(grid, layer) {
+  const values = [];
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      const elevation = elevationFromLayer(layer, x, y);
+      grid[y][x].elevation = Math.round(elevation);
+      values.push(elevation);
+    }
+  }
+
+  const minElevation = Math.floor(Math.min(...values));
+  const maxElevation = Math.ceil(Math.max(...values));
+  const range = Math.max(1, maxElevation - minElevation);
+
+  for (const row of grid) {
+    for (const tile of row) {
+      const rawNormalized = clamp((tile.elevation - minElevation) / range, 0, 1);
+      const normalized = Math.pow(rawNormalized, 0.58);
+      tile.elevationNormalized = Number(normalized.toFixed(3));
+      tile.elevationBand = Math.round(normalized * 5);
+
+      if (tile.building.type !== 'water') {
+        if (!['rice', 'wetland', 'park', 'water'].includes(tile.surface || '') && normalized >= 0.68) {
+          tile.surface = 'ridge';
+        } else if (!tile.surface && normalized <= 0.24 && ['grass', 'tree'].includes(tile.building.type)) {
+          tile.surface = 'lowland';
+        }
+      }
+
+      tile.landValue = Math.max(10, tile.landValue + Math.round((normalized - 0.5) * 12));
+    }
+  }
+
+  return {
+    elevationSource: layer?.source || 'synthetic-fallback',
+    elevationModel: layer?.model || 'synthetic ridge fallback',
+    elevationSampleSteps: layer?.steps || 0,
+    elevationNormalization: 'gamma-0.58',
+    elevationMinMeters: minElevation,
+    elevationMaxMeters: maxElevation,
+  };
 }
 
 function computeStats(grid) {
@@ -547,6 +881,7 @@ function computeStats(grid) {
 function buildState(grid, sourceMeta, placedBuildings) {
   const stats = computeStats(grid);
   const waterBodies = buildWaterBodies(grid);
+  const mapLabels = buildMapLabels();
 
   return {
     id: 'tana-builder-antananarivo-osm',
@@ -601,6 +936,8 @@ function buildState(grid, sourceMeta, placedBuildings) {
       { id: 'itaosy', name: 'Itaosy', direction: 'west', connected: false, discovered: true },
     ],
     waterBodies,
+    mapLabels,
+    initialView: { x: 54, y: 49, zoom: 0.82, mobileZoom: 0.58 },
     gameVersion: 0,
     cities: [
       {
@@ -705,8 +1042,10 @@ async function main() {
   const output = getArg('--output', DEFAULT_OUTPUT);
   const contextFile = getArg('--context-file', null);
   const buildingsFile = getArg('--buildings-file', null);
+  const elevationFile = getArg('--elevation-file', null);
   const cacheDir = getArg('--cache-dir', DEFAULT_CACHE_DIR);
   const refresh = hasFlag('--refresh');
+  const noElevation = hasFlag('--no-elevation');
 
   const context = await loadLayer({
     label: 'context',
@@ -722,17 +1061,25 @@ async function main() {
     cacheFile: path.join(cacheDir, 'antananarivo-buildings.json'),
     refresh,
   });
+  const elevationLayer = await loadElevationLayer({
+    inputFile: elevationFile,
+    cacheFile: path.join(cacheDir, 'antananarivo-elevation.json'),
+    refresh,
+    disabled: noElevation,
+  });
 
   const grid = createGrid(GRID_SIZE);
   applyContext(grid, context.elements || []);
   const placedBuildings = applyBuildings(grid, buildings.elements || []);
   applyLandmarks(grid);
+  const elevationMeta = applyElevation(grid, elevationLayer);
 
   const sourceMeta = {
     contextTimestamp: context.osm3s?.timestamp_osm_base,
     buildingsTimestamp: buildings.osm3s?.timestamp_osm_base,
     contextElements: context.elements?.length ?? 0,
     buildingElements: buildings.elements?.length ?? 0,
+    ...elevationMeta,
   };
 
   const state = buildState(grid, sourceMeta, placedBuildings);

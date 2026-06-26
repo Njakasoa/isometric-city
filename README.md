@@ -4,7 +4,12 @@ Custom fork of IsoCity, started from `amilich/isometric-city`, for a deployable 
 
 Working title: **Tana Builder**.
 
-The default city seed is an approximate, playable Antananarivo map generated from OpenStreetMap data through Overpass. It samples roads, water, landuse and building centers into the game's isometric grid.
+The default city seed is an approximate, playable Antananarivo map generated from public data:
+
+- OpenStreetMap through Overpass for roads, rail, water, landuse and building centers.
+- Open-Meteo Elevation API for a cached Copernicus DEM GLO-90 altitude layer.
+
+The pipeline converts WGS84 coordinates into the game's 96x96 isometric grid, reduces noisy minor-road/drain data, preserves key Antananarivo landmarks, and stores elevation per tile for terrain tinting.
 
 Regenerate it with:
 
@@ -12,7 +17,16 @@ Regenerate it with:
 npm run generate:antananarivo
 ```
 
+If Overpass is slow, use previously exported JSON layers:
+
+```bash
+npm run generate:antananarivo -- --context-file /path/to/context.json --buildings-file /path/to/buildings.json
+```
+
+Use `--refresh` to refresh caches and `--no-elevation` to fall back to the synthetic terrain model.
+
 Map data attribution: © OpenStreetMap contributors, available under the ODbL. See https://www.openstreetmap.org/copyright.
+Elevation source: Open-Meteo Elevation API, based on Copernicus DEM GLO-90.
 
 ## Upstream
 

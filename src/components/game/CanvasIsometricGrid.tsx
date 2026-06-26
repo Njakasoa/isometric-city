@@ -123,10 +123,65 @@ export interface CanvasIsometricGridProps {
   onBargeDelivery?: (cargoValue: number, cargoType: number) => void;
 }
 
+function clampColor(value: number) {
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
+
+function hexToRgb(hex: string) {
+  const normalized = hex.replace('#', '');
+  if (normalized.length !== 6) return null;
+  return {
+    r: parseInt(normalized.slice(0, 2), 16),
+    g: parseInt(normalized.slice(2, 4), 16),
+    b: parseInt(normalized.slice(4, 6), 16),
+  };
+}
+
+function rgbToHex(r: number, g: number, b: number) {
+  return `#${[r, g, b].map((channel) => clampColor(channel).toString(16).padStart(2, '0')).join('')}`;
+}
+
+function adjustHexColor(hex: string, amount: number) {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return hex;
+  return rgbToHex(rgb.r + amount, rgb.g + amount, rgb.b + amount);
+}
+
+function mixHexColor(hex: string, target: string, weight: number) {
+  const base = hexToRgb(hex);
+  const tint = hexToRgb(target);
+  if (!base || !tint) return hex;
+  const inverse = 1 - weight;
+  return rgbToHex(
+    base.r * inverse + tint.r * weight,
+    base.g * inverse + tint.g * weight,
+    base.b * inverse + tint.b * weight,
+  );
+}
+
+function getTerrainColor(baseColor: string, tile: Tile, intensity = 1, applySurface = true) {
+  if (tile.building.type === 'water') return baseColor;
+
+  let color = baseColor;
+  if (applySurface) {
+    if (tile.surface === 'rice') color = mixHexColor(color, '#7a9f55', 0.55);
+    if (tile.surface === 'wetland') color = mixHexColor(color, '#4f8068', 0.5);
+    if (tile.surface === 'lowland') color = mixHexColor(color, '#5f8f6a', 0.35);
+    if (tile.surface === 'ridge') color = mixHexColor(color, '#8a7047', 0.42);
+    if (tile.surface === 'park') color = mixHexColor(color, '#4f8d45', 0.35);
+  }
+
+  if (typeof tile.elevationNormalized === 'number') {
+    color = adjustHexColor(color, (tile.elevationNormalized - 0.46) * 42 * intensity);
+  }
+
+  return color;
+}
+
 // Canvas-based Isometric Grid - HIGH PERFORMANCE
 export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile, isMobile = false, navigationTarget, onNavigationComplete, onViewportChange, onBargeDelivery }: CanvasIsometricGridProps) {
   const { state, latestStateRef, placeAtTile, finishTrackDrag, connectToCity, checkAndDiscoverCities, currentSpritePack, visualHour } = useGame();
-  const { grid, gridSize, selectedTool, speed, adjacentCities, waterBodies, gameVersion } = state;
+  const { grid, gridSize, selectedTool, speed, adjacentCities, waterBodies, mapLabels = [], gameVersion } = state;
   
   // PERF: Use latestStateRef for real-time grid access in animation loops
   // This avoids waiting for React state sync which is throttled for performance
@@ -294,6 +349,7 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
   const [dragEndTile, setDragEndTile] = useState<{ x: number; y: number } | null>(null);
   const [cityConnectionDialog, setCityConnectionDialog] = useState<{ direction: 'north' | 'south' | 'east' | 'west' } | null>(null);
   const keysPressedRef = useRef<Set<string>>(new Set());
+  const appliedInitialViewRef = useRef<string | null>(null);
 
   // Only zoning tools show the grid/rectangle selection visualization
   // Note: zone_water uses supportsDragPlace behavior (place on click/drag) instead of rectangle selection
@@ -1201,6 +1257,11 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
         }
         strokeColor = '#f59e0b';
       }
+
+      const isTransportBase = ['road', 'bridge', 'rail'].includes(tile.building.type);
+      const isConcreteBase = hasGreyBase && !skipGreyBase;
+      topColor = getTerrainColor(topColor, tile, isTransportBase || isConcreteBase ? 0.25 : 1, !isTransportBase && !isConcreteBase);
+      strokeColor = getTerrainColor(strokeColor, tile, 0.35, false);
       
       // Skip drawing green base for tiles adjacent to water (will be drawn later over water)
       // This includes grass, empty, and tree tiles - all have green bases
@@ -1223,6 +1284,20 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
         if (currentZoom >= 0.6) {
           ctx.strokeStyle = strokeColor;
           ctx.lineWidth = 0.5;
+          ctx.stroke();
+        }
+
+        if (
+          currentZoom >= 0.68 &&
+          tile.building.type !== 'water' &&
+          (tile.surface === 'ridge' || (tile.elevationBand ?? 0) >= 4) &&
+          (tile.x + tile.y) % 4 === 0
+        ) {
+          ctx.strokeStyle = 'rgba(255, 244, 190, 0.28)';
+          ctx.lineWidth = 0.75;
+          ctx.beginPath();
+          ctx.moveTo(x + w * 0.22, y + h * 0.52);
+          ctx.quadraticCurveTo(x + w * 0.5, y + h * 0.36, x + w * 0.78, y + h * 0.52);
           ctx.stroke();
         }
         
@@ -2121,13 +2196,23 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
       }
     }
     
-    // Draw water body names (after everything else so they're on top)
-    if (waterBodies && waterBodies.length > 0) {
+    // Draw map labels after everything else so the recognizable Tana landmarks stay visible.
+    const labelItems = [
+      ...(waterBodies || [])
+        .filter((waterBody) => waterBody.name !== 'Lac Anosy')
+        .map((waterBody) => ({
+          id: waterBody.id,
+          name: waterBody.name,
+          kind: 'water',
+          priority: 2,
+          x: waterBody.centerX,
+          y: waterBody.centerY,
+        })),
+      ...mapLabels,
+    ];
+
+    if (labelItems.length > 0) {
       ctx.save();
-      ctx.font = `${Math.max(10, 12 / zoom)}px sans-serif`;
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)';
-      ctx.lineWidth = 2;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       
@@ -2139,18 +2224,28 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
       const viewRight = viewWidth - offset.x / zoom + TILE_WIDTH;
       const viewBottom = viewHeight - offset.y / zoom + TILE_HEIGHT * 2;
       
-      for (const waterBody of waterBodies) {
-        if (waterBody.tiles.length === 0) continue;
-        
+      for (const label of labelItems) {
+        if (label.priority > 1 && zoom < 0.62) continue;
+
         // Convert grid coordinates to screen coordinates (context is already translated)
-        const { screenX, screenY } = gridToScreen(waterBody.centerX, waterBody.centerY, 0, 0);
+        const { screenX, screenY } = gridToScreen(label.x, label.y, 0, 0);
         
         // Only draw if visible on screen (with some padding for text)
         if (screenX >= viewLeft - 100 && screenX <= viewRight + 100 &&
             screenY >= viewTop - 50 && screenY <= viewBottom + 50) {
-          // Draw text with outline for better visibility, centered on tile
-          ctx.strokeText(waterBody.name, screenX + TILE_WIDTH / 2, screenY + TILE_HEIGHT / 2);
-          ctx.fillText(waterBody.name, screenX + TILE_WIDTH / 2, screenY + TILE_HEIGHT / 2);
+          const fontSize = Math.max(10, (label.priority === 1 ? 13 : 11) / zoom);
+          const fillColor =
+            label.kind === 'water' ? 'rgba(214, 237, 255, 0.94)' :
+            label.kind === 'ridge' ? 'rgba(255, 238, 184, 0.94)' :
+            label.kind === 'lowland' ? 'rgba(220, 255, 196, 0.9)' :
+            'rgba(255, 255, 255, 0.92)';
+
+          ctx.font = `${label.priority === 1 ? '600 ' : ''}${fontSize}px sans-serif`;
+          ctx.fillStyle = fillColor;
+          ctx.strokeStyle = 'rgba(0, 0, 0, 0.58)';
+          ctx.lineWidth = 2.5;
+          ctx.strokeText(label.name, screenX + TILE_WIDTH / 2, screenY + TILE_HEIGHT / 2);
+          ctx.fillText(label.name, screenX + TILE_WIDTH / 2, screenY + TILE_HEIGHT / 2);
         }
       }
       
@@ -2168,7 +2263,7 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
       }
     };
   // PERF: hoveredTile and selectedTile removed from deps - now rendered on separate hover canvas layer
-  }, [grid, gridSize, offset, zoom, overlayMode, imagesLoaded, imageLoadVersion, canvasSize, dragStartTile, dragEndTile, state.services, currentSpritePack, waterBodies, getTileMetadata, showsDragGrid, isMobile]);
+  }, [grid, gridSize, offset, zoom, overlayMode, imagesLoaded, imageLoadVersion, canvasSize, dragStartTile, dragEndTile, state.services, currentSpritePack, waterBodies, mapLabels, getTileMetadata, showsDragGrid, isMobile]);
   
   // PERF: Lightweight hover/selection overlay - renders ONLY tile highlights
   // This runs frequently (on mouse move) but is extremely fast since it only draws simple shapes
@@ -2627,6 +2722,31 @@ export function CanvasIsometricGrid({ overlayMode, selectedTile, setSelectedTile
       y: Math.max(bounds.minOffsetY, Math.min(bounds.maxOffsetY, newOffset.y)),
     };
   }, [getMapBounds, canvasSize.width, canvasSize.height]);
+
+  useEffect(() => {
+    const initialView = state.initialView;
+    if (!initialView || canvasSize.width <= 0 || canvasSize.height <= 0) return;
+
+    const viewKey = `${state.id}:${gameVersion}:${canvasSize.width}x${canvasSize.height}`;
+    if (appliedInitialViewRef.current === viewKey) return;
+
+    const nextZoom = isMobile
+      ? initialView.mobileZoom ?? Math.min(initialView.zoom ?? zoom, 0.62)
+      : initialView.zoom ?? zoom;
+    const { screenX, screenY } = gridToScreen(initialView.x, initialView.y, 0, 0);
+    const bounds = getMapBounds(nextZoom, canvasSize.width, canvasSize.height);
+    const nextOffset = {
+      x: canvasSize.width / 2 - screenX * nextZoom,
+      y: canvasSize.height * 0.48 - screenY * nextZoom,
+    };
+
+    appliedInitialViewRef.current = viewKey;
+    setZoom(nextZoom);
+    setOffset({
+      x: Math.max(bounds.minOffsetX, Math.min(bounds.maxOffsetX, nextOffset.x)),
+      y: Math.max(bounds.minOffsetY, Math.min(bounds.maxOffsetY, nextOffset.y)),
+    });
+  }, [state.id, state.initialView, gameVersion, isMobile, zoom, canvasSize.width, canvasSize.height, getMapBounds]);
 
   // Handle minimap navigation - center the view on the target tile
   useEffect(() => {

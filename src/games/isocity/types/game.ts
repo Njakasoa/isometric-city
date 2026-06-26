@@ -105,6 +105,10 @@ export interface Tile {
   traffic: number;
   hasSubway: boolean;
   hasRailOverlay?: boolean;
+  elevation?: number;
+  elevationNormalized?: number;
+  elevationBand?: number;
+  surface?: 'urban' | 'park' | 'rice' | 'wetland' | 'lowland' | 'ridge' | 'water';
 }
 
 export interface City {
@@ -130,6 +134,15 @@ export interface WaterBody {
   tiles: { x: number; y: number }[];
   centerX: number;
   centerY: number;
+}
+
+export interface MapLabel {
+  id: string;
+  name: string;
+  kind: 'station' | 'district' | 'water' | 'landmark' | 'ridge' | 'lowland';
+  priority: number;
+  x: number;
+  y: number;
 }
 
 export interface Notification {
@@ -171,6 +184,8 @@ export interface GameState {
   disastersEnabled: boolean;
   adjacentCities: AdjacentCity[];
   waterBodies: WaterBody[];
+  mapLabels?: MapLabel[];
+  initialView?: { x: number; y: number; zoom?: number; mobileZoom?: number };
   gameVersion: number;
   cities: City[];
 }
