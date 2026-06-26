@@ -1,0 +1,9 @@
+.git
+.next
+.open-next
+.wrangler
+node_modules
+npm-debug.log*
+Dockerfile
+.env
+.env*.local

@@ -13,6 +13,7 @@ import { decompressFromUTF16, compressToUTF16 } from 'lz-string';
 import { LanguageSelector } from '@/components/ui/LanguageSelector';
 import { T } from 'gt-next';
 import { Users, X } from 'lucide-react';
+import { GAME_BRAND } from '@/lib/gameBrand';
 
 const STORAGE_KEY = 'isocity-game-state';
 const SAVED_CITIES_INDEX_KEY = 'isocity-saved-cities-index';
@@ -121,7 +122,7 @@ function saveCityToIndex(state: GameState, roomCode?: string): void {
     // Create city meta
     const cityMeta: SavedCityMeta = {
       id: state.id || `city-${Date.now()}`,
-      cityName: state.cityName || 'Co-op City',
+      cityName: state.cityName || GAME_BRAND.coopCityName,
       population: state.stats.population,
       money: state.stats.money,
       year: state.year,
@@ -446,7 +447,7 @@ export default function HomePage() {
   if (isChecking) {
     return (
       <main className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
-        <div className="text-white/60"><T>Loading...</T></div>
+        <div className="text-white/60"><T>Chargement...</T></div>
       </main>
     );
   }
@@ -472,14 +473,17 @@ export default function HomePage() {
   if (isMobile) {
     return (
       <MultiplayerContextProvider>
-        <main className="h-[100dvh] max-h-[100dvh] bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex flex-col items-center px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] overflow-y-auto">
+        <main className="h-[100dvh] max-h-[100dvh] bg-[#11150f] flex flex-col items-center px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] overflow-y-auto">
           {/* Spacer to push content down slightly from top */}
           <div className="flex-shrink-0 h-4 sm:h-8" />
           
           {/* Title - smaller on very small screens */}
-          <h1 className="text-4xl sm:text-5xl font-light tracking-wider text-white/90 mb-4 sm:mb-6 flex-shrink-0">
-            IsoCity
+          <h1 className="text-4xl sm:text-5xl font-light tracking-wider text-white/90 mb-2 flex-shrink-0">
+            {GAME_BRAND.name}
           </h1>
+          <p className="max-w-xs text-center text-sm text-white/50 mb-4 sm:mb-6">
+            {GAME_BRAND.tagline}
+          </p>
           
           {/* Sprite Gallery - smaller on mobile, contained */}
           <div className="mb-4 sm:mb-6 flex-shrink-0">
@@ -492,7 +496,7 @@ export default function HomePage() {
               onClick={() => setShowGame(true)}
               className="w-full py-4 sm:py-6 text-lg sm:text-xl font-light tracking-wide bg-white/10 hover:bg-white/20 text-white border border-white/20 rounded-none transition-all duration-300"
             >
-              {hasSaved ? <T>Continue</T> : <T>New Game</T>}
+              {hasSaved ? <T>Continuer</T> : <T>Nouvelle ville</T>}
             </Button>
 
             <Button
@@ -500,7 +504,7 @@ export default function HomePage() {
               variant="outline"
               className="w-full py-4 sm:py-6 text-lg sm:text-xl font-light tracking-wide bg-white/5 hover:bg-white/15 text-white/60 hover:text-white border border-white/15 rounded-none transition-all duration-300"
             >
-              <T>Co-op</T>
+              <T>Coop</T>
             </Button>
 
             <Button
@@ -523,25 +527,25 @@ export default function HomePage() {
               variant="outline"
               className="w-full py-4 sm:py-6 text-lg sm:text-xl font-light tracking-wide bg-transparent hover:bg-white/10 text-white/40 hover:text-white/60 border border-white/10 rounded-none transition-all duration-300"
             >
-              <T>Load Example</T>
+              <T>Ville exemple</T>
             </Button>
             <div className="flex items-start justify-between w-full">
               <div className="flex flex-col">
                 <a
-                  href="https://cursor.com"
+                  href={GAME_BRAND.forkRepoUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-left py-2 text-sm font-light tracking-wide text-white/40 hover:text-white/70 transition-colors duration-200"
                 >
-                  <T>Made with Cursor</T>
+                  <T>Fork GitHub</T>
                 </a>
                 <a
-                  href="https://github.com/amilich/isometric-city"
+                  href={GAME_BRAND.upstreamRepoUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-left py-2 text-sm font-light tracking-wide text-white/40 hover:text-white/70 transition-colors duration-200"
                 >
-                  <T>Open GitHub</T>
+                  <T>Moteur original</T>
                 </a>
               </div>
               <LanguageSelector variant="ghost" className="text-white/40 hover:text-white/70 hover:bg-white/10" />
@@ -552,7 +556,7 @@ export default function HomePage() {
           {savedCities.length > 0 && (
             <div className="w-full max-w-xs mt-3 sm:mt-4 flex-1 min-h-0 flex flex-col">
               <h2 className="text-xs font-medium text-white/40 uppercase tracking-wider mb-2 flex-shrink-0">
-                <T>Saved Cities</T>
+                <T>Villes sauvegardees</T>
               </h2>
               <div 
                 className="flex flex-col gap-2 flex-1 overflow-y-auto overscroll-y-contain"
@@ -588,27 +592,32 @@ export default function HomePage() {
   // Desktop landing page
   return (
     <MultiplayerContextProvider>
-      <main className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-8">
+      <main className="min-h-screen bg-[#11150f] flex items-center justify-center p-8">
         <div className="max-w-7xl w-full grid lg:grid-cols-2 gap-16 items-center">
           
           {/* Left - Title and Start Button */}
           <div className="flex flex-col items-center lg:items-start justify-center space-y-12">
-            <h1 className="text-8xl font-light tracking-wider text-white/90">
-              IsoCity
-            </h1>
+            <div className="space-y-4">
+              <h1 className="text-6xl sm:text-7xl xl:text-8xl font-light tracking-wider text-white/90">
+                {GAME_BRAND.name}
+              </h1>
+              <p className="max-w-xl text-xl font-light leading-relaxed text-white/50">
+                {GAME_BRAND.tagline}
+              </p>
+            </div>
             <div className="flex flex-col gap-3">
               <Button 
                 onClick={() => setShowGame(true)}
                 className="w-64 py-8 text-2xl font-light tracking-wide bg-white/10 hover:bg-white/20 text-white border border-white/20 rounded-none transition-all duration-300"
               >
-                {hasSaved ? <T>Continue</T> : <T>New Game</T>}
+                {hasSaved ? <T>Continuer</T> : <T>Nouvelle ville</T>}
               </Button>
               <Button
                 onClick={() => setShowCoopModal(true)}
                 variant="outline"
                 className="w-64 py-8 text-2xl font-light tracking-wide bg-white/5 hover:bg-white/15 text-white/60 hover:text-white border border-white/15 rounded-none transition-all duration-300"
               >
-                <T>Co-op</T>
+                <T>Coop</T>
               </Button>
               <Button
                 onClick={async () => {
@@ -630,25 +639,25 @@ export default function HomePage() {
                 variant="outline"
                 className="w-64 py-8 text-2xl font-light tracking-wide bg-transparent hover:bg-white/10 text-white/40 hover:text-white/60 border border-white/10 rounded-none transition-all duration-300"
               >
-                <T>Load Example</T>
+                <T>Ville exemple</T>
               </Button>
               <div className="flex items-start justify-between w-64">
                 <div className="flex flex-col">
                   <a
-                    href="https://cursor.com"
+                    href={GAME_BRAND.forkRepoUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-left py-2 text-sm font-light tracking-wide text-white/40 hover:text-white/70 transition-colors duration-200"
                   >
-                    <T>Made with Cursor</T>
+                    <T>Fork GitHub</T>
                   </a>
                   <a
-                    href="https://github.com/amilich/isometric-city"
+                    href={GAME_BRAND.upstreamRepoUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-left py-2 text-sm font-light tracking-wide text-white/40 hover:text-white/70 transition-colors duration-200"
                   >
-                    <T>Open GitHub</T>
+                    <T>Moteur original</T>
                   </a>
                 </div>
                 <LanguageSelector variant="ghost" className="text-white/40 hover:text-white/70 hover:bg-white/10" />
@@ -659,7 +668,7 @@ export default function HomePage() {
             {savedCities.length > 0 && (
               <div className="w-64">
                 <h2 className="text-xs font-medium text-white/40 uppercase tracking-wider mb-2">
-                  <T>Saved Cities</T>
+                  <T>Villes sauvegardees</T>
                 </h2>
                 <div 
                   className="flex flex-col gap-2 max-h-64 overflow-y-auto overscroll-y-contain"

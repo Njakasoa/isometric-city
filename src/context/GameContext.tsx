@@ -36,6 +36,7 @@ import {
   setActiveSpritePack,
   SpritePack,
 } from '@/lib/renderConfig';
+import { GAME_BRAND } from '@/lib/gameBrand';
 
 const STORAGE_KEY = 'isocity-game-state';
 const SAVED_CITY_STORAGE_KEY = 'isocity-saved-city'; // For restoring after viewing shared city
@@ -647,7 +648,7 @@ function deleteCityState(cityId: string): void {
 
 export function GameProvider({ children, startFresh = false }: { children: React.ReactNode; startFresh?: boolean }) {
   // Start with a default state, we'll load from localStorage after mount (unless startFresh is true)
-  const [state, setState] = useState<GameState>(() => createInitialGameState(DEFAULT_GRID_SIZE, 'IsoCity'));
+  const [state, setState] = useState<GameState>(() => createInitialGameState(DEFAULT_GRID_SIZE, GAME_BRAND.defaultCityName));
   
   const [hasExistingGame, setHasExistingGame] = useState(false);
   const [isStateReady, setIsStateReady] = useState(false);
@@ -1127,7 +1128,7 @@ export function GameProvider({ children, startFresh = false }: { children: React
 
   const newGame = useCallback((name?: string, size?: number) => {
     clearGameState(); // Clear saved state when starting fresh
-    const fresh = createInitialGameState(size ?? DEFAULT_GRID_SIZE, name || 'IsoCity');
+    const fresh = createInitialGameState(size ?? DEFAULT_GRID_SIZE, name || GAME_BRAND.defaultCityName);
     // Increment gameVersion from current state to ensure vehicles/entities are cleared
     setState((prev) => ({
       ...fresh,

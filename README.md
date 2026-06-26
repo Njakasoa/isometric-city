@@ -1,4 +1,10 @@
-# IsoCity & IsoCoaster
+# Tana Builder
+
+Custom fork of IsoCity, started from `amilich/isometric-city`, for a deployable isometric city-builder game.
+
+Working title: **Tana Builder**.
+
+## Upstream
 
 Open-source isometric city and theme park builder built with NextJS, TypeScript, and HTML5 Canvas.
 

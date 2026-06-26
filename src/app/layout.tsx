@@ -4,6 +4,7 @@ import { Analytics } from '@vercel/analytics/next';
 import './globals.css';
 import { getLocale } from "gt-next/server";
 import { GTProvider } from "gt-next";
+import { GAME_BRAND, SITE_URL } from '@/lib/gameBrand';
 
 const playfair = Playfair_Display({
   subsets: ['latin'],
@@ -20,24 +21,24 @@ const dmSans = DM_Sans({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL('https://iso-city.com'),
+  metadataBase: new URL(SITE_URL),
   title: {
-    default: 'ISOCITY — Metropolis Builder',
-    template: 'ISOCITY — %s',
+    default: `${GAME_BRAND.name} - City Builder`,
+    template: `${GAME_BRAND.name} - %s`,
   },
-  description: 'A richly detailed isometric city builder. Build your metropolis and manage resources with cars, planes, helicopters, boats, trains, citizens, and more.',
+  description: GAME_BRAND.description,
   openGraph: {
-    title: 'ISOCITY — Metropolis Builder',
-    description: 'A richly detailed isometric city builder. Build your metropolis and manage resources with cars, planes, helicopters, boats, trains, citizens, and more.',
+    title: `${GAME_BRAND.name} - City Builder`,
+    description: GAME_BRAND.description,
     type: 'website',
-    siteName: 'IsoCity',
+    siteName: GAME_BRAND.name,
     images: [
       {
         url: '/opengraph-image.png',
         width: 1179,
         height: 1406,
         type: 'image/png',
-        alt: 'ISOCITY - Isometric city builder game screenshot'
+        alt: `${GAME_BRAND.name} - isometric city builder screenshot`
       }
     ],
   },
@@ -48,7 +49,7 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: 'IsoCity'
+    title: GAME_BRAND.shortName
   },
   formatDetection: {
     telephone: false
