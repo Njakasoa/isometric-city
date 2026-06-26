@@ -9,7 +9,7 @@ The default city seed is an approximate, playable Antananarivo map generated fro
 - OpenStreetMap through Overpass for roads, rail, water, landuse and building centers.
 - Open-Meteo Elevation API for a cached Copernicus DEM GLO-90 altitude layer.
 
-The pipeline converts WGS84 coordinates into the game's 96x96 isometric grid, reduces noisy minor-road/drain data, preserves key Antananarivo landmarks, and stores elevation per tile for terrain tinting.
+The pipeline converts WGS84 coordinates into the game's 128x128 isometric grid, reduces noisy minor-road/drain data, preserves key Antananarivo landmarks, stores elevation per tile for terrain tinting, and rasterizes OSM road geometry into car-traversable 4-connected tile paths.
 
 Regenerate it with:
 

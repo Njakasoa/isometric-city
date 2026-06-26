@@ -19,14 +19,15 @@ const DEFAULT_OUTPUT = path.join(ROOT_DIR, 'public', 'example-states', 'antanana
 const DEFAULT_CACHE_DIR = path.join(ROOT_DIR, '.osm-cache');
 
 const DEFAULT_BBOX = {
-  south: -18.928,
-  west: 47.500,
-  north: -18.890,
-  east: 47.540,
+  south: -18.948,
+  west: 47.492,
+  north: -18.895,
+  east: 47.566,
 };
 
-const GRID_SIZE = 96;
-const BUILDING_LIMIT = 6500;
+const GRID_SIZE = 128;
+const BUILDING_LIMIT = 12000;
+const MAX_VISIBLE_BUILDINGS = 1100;
 const ELEVATION_SAMPLE_STEPS = 17;
 const ELEVATION_BATCH_SIZE = 90;
 const ELEVATION_ENDPOINT = 'https://api.open-meteo.com/v1/elevation';
@@ -35,12 +36,26 @@ const ROAD_HIGHWAYS = new Set([
   'motorway',
   'trunk',
   'primary',
+  'primary_link',
   'secondary',
+  'secondary_link',
   'tertiary',
+  'tertiary_link',
   'residential',
   'unclassified',
   'living_street',
   'service',
+]);
+
+const MAJOR_HIGHWAYS = new Set([
+  'motorway',
+  'trunk',
+  'primary',
+  'primary_link',
+  'secondary',
+  'secondary_link',
+  'tertiary',
+  'tertiary_link',
 ]);
 
 const LOWLAND_LANDUSES = new Set([
@@ -60,8 +75,12 @@ const MAP_LABELS = [
   { id: 'label-mahamasina', name: 'Mahamasina', lat: -18.9194, lon: 47.5213, kind: 'landmark', priority: 1 },
   { id: 'label-haute-ville', name: 'Haute Ville', lat: -18.9198, lon: 47.5292, kind: 'ridge', priority: 1 },
   { id: 'label-rova', name: 'Rova', lat: -18.9237, lon: 47.5323, kind: 'landmark', priority: 1 },
+  { id: 'label-anosibe', name: 'Anosibe', lat: -18.9249, lon: 47.5144, kind: 'district', priority: 1 },
+  { id: 'label-anosizato', name: 'Anosizato', lat: -18.9391, lon: 47.4971, kind: 'district', priority: 1 },
   { id: 'label-ankatso', name: 'Ankatso', lat: -18.9045, lon: 47.5390, kind: 'district', priority: 2 },
-  { id: 'label-rizieres-ouest', name: 'Rizieres ouest', lat: -18.9140, lon: 47.5058, kind: 'lowland', priority: 2 },
+  { id: 'label-axe-est', name: 'Axe Est / RN2', lat: -18.9052, lon: 47.5580, kind: 'district', priority: 1 },
+  { id: 'label-ankadimbahoaka', name: 'Ankadimbahoaka', lat: -18.9430, lon: 47.5234, kind: 'district', priority: 2 },
+  { id: 'label-rizieres-ouest', name: 'Rizieres ouest', lat: -18.9140, lon: 47.5035, kind: 'lowland', priority: 2 },
 ];
 
 const ENDPOINTS = [
@@ -128,6 +147,12 @@ function hasFlag(name) {
   return process.argv.includes(name);
 }
 
+function cacheKey() {
+  return `${GRID_SIZE}-${DEFAULT_BBOX.south}-${DEFAULT_BBOX.west}-${DEFAULT_BBOX.north}-${DEFAULT_BBOX.east}`
+    .replace(/[^0-9a-z]+/gi, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
 function stableHash(input) {
   const value = String(input);
   let hash = 2166136261;
@@ -140,9 +165,18 @@ function stableHash(input) {
 
 function makeBuilding(type, seed = type) {
   const stats = BUILDING_STATS[type] || { maxPop: 0, maxJobs: 0, landValue: 0 };
-  const level = ['grass', 'water', 'road', 'rail', 'tree'].includes(type)
-    ? 0
-    : 1 + (stableHash(seed) % 3);
+  let level = 1;
+  if (['grass', 'water', 'road', 'rail', 'tree'].includes(type)) {
+    level = 0;
+  } else if (type === 'house_small') {
+    level = 1;
+  } else if (type === 'house_medium' || type === 'apartment_low') {
+    level = 1 + (stableHash(seed) % 2);
+  } else if (type === 'apartment_high' || type === 'office_high') {
+    level = 2 + (stableHash(seed) % 2);
+  } else {
+    level = 1 + (stableHash(seed) % 2);
+  }
   const occupancy = 0.35 + ((stableHash(`${seed}:occ`) % 35) / 100);
 
   return {
@@ -210,15 +244,41 @@ function fromGrid(x, y, bbox = DEFAULT_BBOX) {
 
 function lineTiles(a, b) {
   const tiles = [];
-  const dx = Math.abs(b.x - a.x);
-  const dy = Math.abs(b.y - a.y);
-  const steps = Math.max(dx, dy, 1);
-  for (let i = 0; i <= steps; i++) {
-    tiles.push({
-      x: Math.round(a.x + ((b.x - a.x) * i) / steps),
-      y: Math.round(a.y + ((b.y - a.y) * i) / steps),
+  let x = a.x;
+  let y = a.y;
+  tiles.push({ x, y });
+
+  const sx = Math.sign(b.x - a.x);
+  const sy = Math.sign(b.y - a.y);
+
+  const distanceToSegment = (px, py) => {
+    const vx = b.x - a.x;
+    const vy = b.y - a.y;
+    const wx = px - a.x;
+    const wy = py - a.y;
+    const lenSq = vx * vx + vy * vy || 1;
+    const t = Math.max(0, Math.min(1, (wx * vx + wy * vy) / lenSq));
+    const projX = a.x + t * vx;
+    const projY = a.y + t * vy;
+    return (px - projX) * (px - projX) + (py - projY) * (py - projY);
+  };
+
+  while (x !== b.x || y !== b.y) {
+    const candidates = [];
+    if (x !== b.x) candidates.push({ x: x + sx, y });
+    if (y !== b.y) candidates.push({ x, y: y + sy });
+
+    candidates.sort((left, right) => {
+      const distanceDiff = distanceToSegment(left.x, left.y) - distanceToSegment(right.x, right.y);
+      if (Math.abs(distanceDiff) > 1e-9) return distanceDiff;
+      return Math.hypot(b.x - left.x, b.y - left.y) - Math.hypot(b.x - right.x, b.y - right.y);
     });
+
+    x = candidates[0].x;
+    y = candidates[0].y;
+    tiles.push({ x, y });
   }
+
   return tiles;
 }
 
@@ -240,12 +300,14 @@ function paintTile(grid, x, y, type, options = {}) {
   return true;
 }
 
-function paintLine(grid, points, type, width = 0) {
+function paintLine(grid, points, type, width = 0, options = {}) {
   for (let i = 1; i < points.length; i++) {
     for (const tile of lineTiles(points[i - 1], points[i])) {
       for (let oy = -width; oy <= width; oy++) {
         for (let ox = -width; ox <= width; ox++) {
-          paintTile(grid, tile.x + ox, tile.y + oy, type, { preserveWater: type !== 'water' });
+          paintTile(grid, tile.x + ox, tile.y + oy, type, {
+            preserveWater: type !== 'water' && !options.allowWaterCrossing,
+          });
         }
       }
     }
@@ -362,10 +424,10 @@ function classifyBuilding(element, tile) {
     return roll < 45 ? 'shop_small' : roll < 72 ? 'shop_medium' : roll < 92 ? 'office_low' : 'office_high';
   }
 
-  if (tags.building === 'apartments') return roll < 72 ? 'apartment_low' : 'apartment_high';
+  if (tags.building === 'apartments') return roll < 88 ? 'apartment_low' : 'house_medium';
   if (tags.building === 'hotel') return 'shop_medium';
 
-  return roll < 58 ? 'house_small' : roll < 84 ? 'house_medium' : 'apartment_low';
+  return roll < 72 ? 'house_small' : roll < 96 ? 'house_medium' : 'apartment_low';
 }
 
 function findPlacement(grid, x, y, radius = 2) {
@@ -464,10 +526,13 @@ function applyContext(grid, elements) {
       paintLine(grid, points, 'rail');
     } else if (tags.highway) {
       if (!ROAD_HIGHWAYS.has(tags.highway)) continue;
-      if (tags.highway === 'service' && stableHash(element.id) % 100 > 10) continue;
-      if (tags.highway === 'residential' && stableHash(element.id) % 100 > 45) continue;
-      if (['unclassified', 'living_street'].includes(tags.highway) && stableHash(element.id) % 100 > 70) continue;
-      paintLine(grid, points, 'road');
+      const isMajor = MAJOR_HIGHWAYS.has(tags.highway);
+      if (tags.highway === 'service' && stableHash(element.id) % 100 > 8) continue;
+      if (tags.highway === 'residential' && stableHash(element.id) % 100 > 38) continue;
+      if (['unclassified', 'living_street'].includes(tags.highway) && stableHash(element.id) % 100 > 58) continue;
+      paintLine(grid, points, 'road', isMajor && ['motorway', 'trunk', 'primary'].includes(tags.highway) ? 1 : 0, {
+        allowWaterCrossing: Boolean(tags.bridge) || isMajor,
+      });
     }
   }
 
@@ -505,12 +570,13 @@ function applyManualLake(grid) {
   paintEllipseRing(grid, center, 8.5, 6.2, 1.2, 'road');
 }
 
-function paintNamedPath(grid, coordinates, type = 'road', width = 0) {
+function paintNamedPath(grid, coordinates, type = 'road', width = 0, options = {}) {
   paintLine(
     grid,
     coordinates.map(([lat, lon]) => toGrid(lat, lon)),
     type,
     width,
+    options,
   );
 }
 
@@ -519,27 +585,50 @@ function applyRecognizableAxes(grid) {
     [-18.9024, 47.5227],
     [-18.9062, 47.5230],
     [-18.9085, 47.5251],
-  ], 'road', 1);
+  ], 'road', 1, { allowWaterCrossing: true });
 
   paintNamedPath(grid, [
     [-18.9085, 47.5251],
     [-18.9120, 47.5220],
-    [-18.9144, 47.5211],
+    [-18.9128, 47.5206],
     [-18.9194, 47.5213],
-  ], 'road');
+  ], 'road', 1);
+
+  paintNamedPath(grid, [
+    [-18.9168, 47.5188],
+    [-18.9202, 47.5175],
+    [-18.9249, 47.5144],
+    [-18.9306, 47.5070],
+    [-18.9391, 47.4971],
+  ], 'road', 1, { allowWaterCrossing: true });
 
   paintNamedPath(grid, [
     [-18.9085, 47.5251],
     [-18.9145, 47.5278],
     [-18.9198, 47.5292],
     [-18.9237, 47.5323],
-  ], 'road');
+  ], 'road', 0, { allowWaterCrossing: true });
+
+  paintNamedPath(grid, [
+    [-18.9073, 47.5238],
+    [-18.9078, 47.5325],
+    [-18.9045, 47.5390],
+    [-18.9028, 47.5490],
+    [-18.9052, 47.5580],
+  ], 'road', 1, { allowWaterCrossing: true });
 
   paintNamedPath(grid, [
     [-18.9024, 47.5227],
     [-18.9018, 47.5260],
     [-18.9028, 47.5310],
     [-18.9045, 47.5390],
+  ], 'rail');
+
+  paintNamedPath(grid, [
+    [-18.9024, 47.5227],
+    [-18.9125, 47.5195],
+    [-18.9240, 47.5110],
+    [-18.9391, 47.4971],
   ], 'rail');
 }
 
@@ -549,9 +638,10 @@ function applyLowlandHints(grid) {
       const tile = grid[y][x];
       if (!['grass', 'tree'].includes(tile.building.type)) continue;
       const { lon, lat } = fromGrid(x, y);
-      const westPlain = lon < 47.512 && lat < -18.898;
-      const northPlain = lat > -18.899 && lon < 47.526;
-      if (westPlain || northPlain) {
+      const westPlain = lon < 47.512 && lat < -18.900;
+      const southwestPlain = lon < 47.505 && lat < -18.925;
+      const northPlain = lat > -18.900 && lon < 47.526;
+      if (westPlain || southwestPlain || northPlain) {
         tile.surface = tile.surface || 'rice';
       }
     }
@@ -573,14 +663,33 @@ function placeBuilding(grid, x, y, type, zone = 'none', seed = `${x}:${y}:${type
   return true;
 }
 
+function buildingPriority(element) {
+  const tags = element.tags || {};
+  if (tags.amenity || tags.building === 'school' || tags.building === 'university') return 4;
+  if (tags.shop || tags.office || tags.building === 'commercial' || tags.building === 'retail') return 3;
+  if (tags.building === 'apartments' || tags.building === 'hotel') return 2;
+  return 1;
+}
+
 function applyBuildings(grid, elements) {
   let placed = 0;
-  for (const element of elements) {
+  const blockCounts = new Map();
+  const sortedElements = [...elements].sort((a, b) => {
+    const priorityDiff = buildingPriority(b) - buildingPriority(a);
+    if (priorityDiff) return priorityDiff;
+    return (stableHash(a.id) % 100000) - (stableHash(b.id) % 100000);
+  });
+
+  for (const element of sortedElements) {
+    if (placed >= MAX_VISIBLE_BUILDINGS) break;
     const center = element.center;
     if (!center) continue;
     const { x, y } = toGrid(center.lat, center.lon);
     const tile = grid[y]?.[x];
     if (!tile || ['water', 'road', 'rail'].includes(tile.building.type)) continue;
+
+    tile.surface = tile.surface || 'urban';
+
     const type = classifyBuilding(element, tile);
     const zone = ['house_small', 'house_medium', 'apartment_low', 'apartment_high'].includes(type)
       ? 'residential'
@@ -589,7 +698,16 @@ function applyBuildings(grid, elements) {
         : ['factory_small', 'factory_medium', 'warehouse'].includes(type)
           ? 'industrial'
           : 'none';
-    if (placeBuilding(grid, x, y, type, zone, element.id)) placed++;
+
+    const blockKey = `${Math.floor(x / 4)}:${Math.floor(y / 4)}`;
+    const currentBlockCount = blockCounts.get(blockKey) ?? 0;
+    const maxBlockCount = zone === 'commercial' ? 3 : zone === 'industrial' ? 2 : 2;
+    if (currentBlockCount >= maxBlockCount && buildingPriority(element) < 4) continue;
+
+    if (placeBuilding(grid, x, y, type, zone, element.id)) {
+      blockCounts.set(blockKey, currentBlockCount + 1);
+      placed++;
+    }
   }
   return placed;
 }
@@ -603,6 +721,65 @@ function applyLandmarks(grid) {
     const { x, y } = toGrid(landmark.lat, landmark.lon);
     placeBuilding(grid, x, y, landmark.type, 'none', landmark.name);
   }
+}
+
+function getRoadComponents(grid) {
+  const seen = new Set();
+  const components = [];
+
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      const key = `${x}:${y}`;
+      if (seen.has(key) || grid[y][x].building.type !== 'road') continue;
+
+      const queue = [{ x, y }];
+      const tiles = [];
+      seen.add(key);
+
+      while (queue.length > 0) {
+        const current = queue.shift();
+        tiles.push(current);
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = current.x + dx;
+          const ny = current.y + dy;
+          const nextKey = `${nx}:${ny}`;
+          if (seen.has(nextKey)) continue;
+          if (grid[ny]?.[nx]?.building.type !== 'road') continue;
+          seen.add(nextKey);
+          queue.push({ x: nx, y: ny });
+        }
+      }
+
+      components.push(tiles);
+    }
+  }
+
+  return components.sort((a, b) => b.length - a.length);
+}
+
+function stabilizeRoadNetwork(grid) {
+  const before = getRoadComponents(grid);
+  let removedTinyRoadTiles = 0;
+
+  for (const component of before) {
+    if (component.length > 2) continue;
+    for (const tile of component) {
+      paintTile(grid, tile.x, tile.y, 'grass', { surface: grid[tile.y][tile.x].surface || 'urban' });
+      removedTinyRoadTiles++;
+    }
+  }
+
+  const after = getRoadComponents(grid);
+  const totalRoadTiles = after.reduce((sum, component) => sum + component.length, 0);
+  const largestRoadComponent = after[0]?.length ?? 0;
+
+  return {
+    roadComponents: after.length,
+    roadTiles: totalRoadTiles,
+    largestRoadComponent,
+    disconnectedRoadTiles: Math.max(0, totalRoadTiles - largestRoadComponent),
+    removedTinyRoadTiles,
+  };
 }
 
 function buildWaterBodies(grid) {
@@ -882,6 +1059,7 @@ function buildState(grid, sourceMeta, placedBuildings) {
   const stats = computeStats(grid);
   const waterBodies = buildWaterBodies(grid);
   const mapLabels = buildMapLabels();
+  const initialView = toGrid(-18.9140, 47.5235);
 
   return {
     id: 'tana-builder-antananarivo-osm',
@@ -937,7 +1115,7 @@ function buildState(grid, sourceMeta, placedBuildings) {
     ],
     waterBodies,
     mapLabels,
-    initialView: { x: 54, y: 49, zoom: 0.82, mobileZoom: 0.58 },
+    initialView: { x: initialView.x, y: initialView.y, zoom: 0.78, mobileZoom: 0.52 },
     gameVersion: 0,
     cities: [
       {
@@ -1046,24 +1224,25 @@ async function main() {
   const cacheDir = getArg('--cache-dir', DEFAULT_CACHE_DIR);
   const refresh = hasFlag('--refresh');
   const noElevation = hasFlag('--no-elevation');
+  const layerCacheKey = cacheKey();
 
   const context = await loadLayer({
     label: 'context',
     query: contextQuery(),
     inputFile: contextFile,
-    cacheFile: path.join(cacheDir, 'antananarivo-context.json'),
+    cacheFile: path.join(cacheDir, `antananarivo-context-${layerCacheKey}.json`),
     refresh,
   });
   const buildings = await loadLayer({
     label: 'buildings',
     query: buildingsQuery(),
     inputFile: buildingsFile,
-    cacheFile: path.join(cacheDir, 'antananarivo-buildings.json'),
+    cacheFile: path.join(cacheDir, `antananarivo-buildings-${layerCacheKey}.json`),
     refresh,
   });
   const elevationLayer = await loadElevationLayer({
     inputFile: elevationFile,
-    cacheFile: path.join(cacheDir, 'antananarivo-elevation.json'),
+    cacheFile: path.join(cacheDir, `antananarivo-elevation-${layerCacheKey}.json`),
     refresh,
     disabled: noElevation,
   });
@@ -1072,13 +1251,17 @@ async function main() {
   applyContext(grid, context.elements || []);
   const placedBuildings = applyBuildings(grid, buildings.elements || []);
   applyLandmarks(grid);
+  const roadMeta = stabilizeRoadNetwork(grid);
   const elevationMeta = applyElevation(grid, elevationLayer);
 
   const sourceMeta = {
     contextTimestamp: context.osm3s?.timestamp_osm_base,
     buildingsTimestamp: buildings.osm3s?.timestamp_osm_base,
+    contextGenerator: context.generator,
+    buildingsGenerator: buildings.generator,
     contextElements: context.elements?.length ?? 0,
     buildingElements: buildings.elements?.length ?? 0,
+    ...roadMeta,
     ...elevationMeta,
   };
 
@@ -1088,6 +1271,7 @@ async function main() {
 
   console.log(`Wrote ${output}`);
   console.log(`Grid ${GRID_SIZE}x${GRID_SIZE}, placed ${placedBuildings} sampled buildings`);
+  console.log(`Road network: ${roadMeta.roadTiles} road tiles, ${roadMeta.roadComponents} components, largest ${roadMeta.largestRoadComponent}`);
   console.log(`Population ${state.stats.population}, jobs ${state.stats.jobs}`);
 }
 
