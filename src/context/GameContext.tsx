@@ -304,6 +304,56 @@ function loadGameState(): GameState | null {
   return null;
 }
 
+function cloneDefaultSeed(seed: GameState, name?: string): GameState {
+  const cloned = typeof structuredClone === 'function'
+    ? structuredClone(seed)
+    : JSON.parse(JSON.stringify(seed)) as GameState;
+
+  const nextName = name || cloned.cityName || GAME_BRAND.defaultCityName;
+  cloned.id = generateUUID();
+  cloned.cityName = nextName;
+  cloned.tick = 0;
+  cloned.speed = 1;
+  cloned.selectedTool = 'select';
+  cloned.activePanel = 'none';
+  cloned.gameVersion = 0;
+  cloned.notifications = cloned.notifications?.map((notification) => ({
+    ...notification,
+    timestamp: Date.now(),
+  })) ?? [];
+
+  if (cloned.cities?.[0]) {
+    cloned.cities[0] = {
+      ...cloned.cities[0],
+      id: cloned.cities[0].id || cloned.id,
+      name: nextName,
+    };
+  }
+
+  return cloned;
+}
+
+async function loadDefaultSeedState(name?: string): Promise<GameState | null> {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const response = await fetch(GAME_BRAND.defaultSeedPath, { cache: 'no-store' });
+    if (!response.ok) {
+      console.warn('Default seed not available:', response.status);
+      return null;
+    }
+
+    const parsed = await response.json();
+    if (parsed && parsed.grid && Array.isArray(parsed.grid) && parsed.gridSize && parsed.stats) {
+      return cloneDefaultSeed(parsed as GameState, name);
+    }
+  } catch (error) {
+    console.warn('Failed to load default seed:', error);
+  }
+
+  return null;
+}
+
 // Optimize game state for saving by removing unnecessary/transient data
 function optimizeStateForSave(state: GameState): GameState {
   // Create a shallow copy to avoid mutating the original
@@ -670,39 +720,65 @@ export function GameProvider({ children, startFresh = false }: { children: React
   // Saved cities state for multi-city save system
   const [savedCities, setSavedCities] = useState<SavedCityMeta[]>([]);
   
+  const defaultSeedRef = useRef<GameState | null>(null);
+
   // Load game state and sprite pack from localStorage on mount (client-side only)
   useEffect(() => {
-    // Load sprite pack preference
-    const savedPackId = loadSpritePackId();
-    const pack = getSpritePack(savedPackId);
-    setCurrentSpritePack(pack);
-    setActiveSpritePack(pack);
-    
-    // Load day/night mode preference
-    const savedDayNightMode = loadDayNightMode();
-    setDayNightModeState(savedDayNightMode);
-    
-    // Load saved cities index
-    const cities = loadSavedCitiesIndex();
-    setSavedCities(cities);
-    
-    // Load game state (unless startFresh is true - used for co-op to start with a new city)
-    if (!startFresh) {
-      const saved = loadGameState();
-      if (saved) {
-        skipNextSaveRef.current = true; // Set skip flag BEFORE updating state
-        setState(saved);
-        setHasExistingGame(true);
+    let cancelled = false;
+
+    const initialize = async () => {
+      // Load sprite pack preference
+      const savedPackId = loadSpritePackId();
+      const pack = getSpritePack(savedPackId);
+      setCurrentSpritePack(pack);
+      setActiveSpritePack(pack);
+      
+      // Load day/night mode preference
+      const savedDayNightMode = loadDayNightMode();
+      setDayNightModeState(savedDayNightMode);
+      
+      // Load saved cities index
+      const cities = loadSavedCitiesIndex();
+      setSavedCities(cities);
+      
+      const seed = await loadDefaultSeedState();
+      if (cancelled) return;
+      if (seed) {
+        defaultSeedRef.current = cloneDefaultSeed(seed, seed.cityName);
+      }
+      
+      // Load game state (unless startFresh is true - used for co-op to start with a new city)
+      if (!startFresh) {
+        const saved = loadGameState();
+        if (saved) {
+          skipNextSaveRef.current = true; // Set skip flag BEFORE updating state
+          setState(saved);
+          setHasExistingGame(true);
+        } else {
+          if (seed) {
+            skipNextSaveRef.current = true;
+            setState(seed);
+          }
+          setHasExistingGame(false);
+        }
       } else {
+        if (seed) {
+          skipNextSaveRef.current = true;
+          setState(seed);
+        }
         setHasExistingGame(false);
       }
-    } else {
-      setHasExistingGame(false);
-    }
-    // Mark as loaded immediately - the skipNextSaveRef will handle skipping the first save
-    hasLoadedRef.current = true;
-    // Mark state as ready - consumers should wait for this before using state
-    setIsStateReady(true);
+      // Mark as loaded immediately - the skipNextSaveRef will handle skipping the first save
+      hasLoadedRef.current = true;
+      // Mark state as ready - consumers should wait for this before using state
+      setIsStateReady(true);
+    };
+
+    initialize();
+
+    return () => {
+      cancelled = true;
+    };
   }, [startFresh]);
   
   // Track the state that needs to be saved
@@ -1128,7 +1204,10 @@ export function GameProvider({ children, startFresh = false }: { children: React
 
   const newGame = useCallback((name?: string, size?: number) => {
     clearGameState(); // Clear saved state when starting fresh
-    const fresh = createInitialGameState(size ?? DEFAULT_GRID_SIZE, name || GAME_BRAND.defaultCityName);
+    const useDefaultSeed = !size || size === defaultSeedRef.current?.gridSize;
+    const fresh = useDefaultSeed && defaultSeedRef.current
+      ? cloneDefaultSeed(defaultSeedRef.current, name)
+      : createInitialGameState(size ?? DEFAULT_GRID_SIZE, name || GAME_BRAND.defaultCityName);
     // Increment gameVersion from current state to ensure vehicles/entities are cleared
     setState((prev) => ({
       ...fresh,

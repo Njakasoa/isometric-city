@@ -514,7 +514,7 @@ export default function HomePage() {
                   window.history.replaceState({}, '', '/');
                   setPendingRoomCode(null);
                 }
-                const response = await fetch('/example-states/example_state_9.json');
+                const response = await fetch(GAME_BRAND.defaultSeedPath);
                 const exampleState = await response.json();
                 try {
                   const compressed = compressToUTF16(JSON.stringify(exampleState));
@@ -527,7 +527,7 @@ export default function HomePage() {
               variant="outline"
               className="w-full py-4 sm:py-6 text-lg sm:text-xl font-light tracking-wide bg-transparent hover:bg-white/10 text-white/40 hover:text-white/60 border border-white/10 rounded-none transition-all duration-300"
             >
-              <T>Ville exemple</T>
+              <T>Antananarivo OSM</T>
             </Button>
             <div className="flex items-start justify-between w-full">
               <div className="flex flex-col">
@@ -626,7 +626,7 @@ export default function HomePage() {
                     window.history.replaceState({}, '', '/');
                     setPendingRoomCode(null);
                   }
-                  const response = await fetch('/example-states/example_state_9.json');
+                  const response = await fetch(GAME_BRAND.defaultSeedPath);
                   const exampleState = await response.json();
                   try {
                     const compressed = compressToUTF16(JSON.stringify(exampleState));
@@ -639,7 +639,7 @@ export default function HomePage() {
                 variant="outline"
                 className="w-64 py-8 text-2xl font-light tracking-wide bg-transparent hover:bg-white/10 text-white/40 hover:text-white/60 border border-white/10 rounded-none transition-all duration-300"
               >
-                <T>Ville exemple</T>
+                <T>Antananarivo OSM</T>
               </Button>
               <div className="flex items-start justify-between w-64">
                 <div className="flex flex-col">

@@ -42,7 +42,7 @@ const CARGO_TYPE_NAMES = [msg('containers'), msg('bulk materials'), msg('oil')];
 export default function Game({ onExit }: { onExit?: () => void }) {
   const gt = useGT();
   const m = useMessages();
-  const { state, setTool, setActivePanel, addMoney, addNotification, setSpeed } = useGame();
+  const { state, setTool, setActivePanel, addMoney, addNotification, setSpeed, isStateReady } = useGame();
   const [overlayMode, setOverlayMode] = useState<OverlayMode>('none');
   const [selectedTile, setSelectedTile] = useState<{ x: number; y: number } | null>(null);
   const [navigationTarget, setNavigationTarget] = useState<{ x: number; y: number } | null>(null);
@@ -237,6 +237,14 @@ export default function Game({ onExit }: { onExit?: () => void }) {
     }
   }, [addMoney, addNotification, gt, m]);
 
+  if (!isStateReady) {
+    return (
+      <div className="w-full h-full bg-background text-muted-foreground flex items-center justify-center">
+        Chargement...
+      </div>
+    );
+  }
+
   // Mobile layout
   if (isMobile) {
     return (
@@ -268,6 +276,14 @@ export default function Game({ onExit }: { onExit?: () => void }) {
               isMobile={true}
               onBargeDelivery={handleBargeDelivery}
             />
+            <a
+              href="https://www.openstreetmap.org/copyright"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="absolute left-2 bottom-1 z-20 rounded-sm bg-black/45 px-1.5 py-0.5 text-[10px] text-white/70 hover:text-white"
+            >
+              &copy; OpenStreetMap contributors
+            </a>
             
             {/* Multiplayer Players Indicator - Mobile */}
             {isMultiplayer && (
@@ -352,6 +368,14 @@ export default function Game({ onExit }: { onExit?: () => void }) {
               onViewportChange={setViewport}
               onBargeDelivery={handleBargeDelivery}
             />
+            <a
+              href="https://www.openstreetmap.org/copyright"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="absolute left-3 bottom-3 z-20 rounded-sm bg-black/45 px-2 py-1 text-xs text-white/70 hover:text-white"
+            >
+              &copy; OpenStreetMap contributors
+            </a>
             <OverlayModeToggle overlayMode={overlayMode} setOverlayMode={setOverlayMode} />
             <MiniMap onNavigate={(x, y) => setNavigationTarget({ x, y })} viewport={viewport} />
             

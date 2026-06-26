@@ -4,6 +4,16 @@ Custom fork of IsoCity, started from `amilich/isometric-city`, for a deployable 
 
 Working title: **Tana Builder**.
 
+The default city seed is an approximate, playable Antananarivo map generated from OpenStreetMap data through Overpass. It samples roads, water, landuse and building centers into the game's isometric grid.
+
+Regenerate it with:
+
+```bash
+npm run generate:antananarivo
+```
+
+Map data attribution: © OpenStreetMap contributors, available under the ODbL. See https://www.openstreetmap.org/copyright.
+
 ## Upstream
 
 Open-source isometric city and theme park builder built with NextJS, TypeScript, and HTML5 Canvas.

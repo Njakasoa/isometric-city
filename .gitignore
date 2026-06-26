@@ -36,6 +36,9 @@ yarn-error.log*
 .open-next
 .wrangler
 
+# generated OSM query cache
+.osm-cache
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

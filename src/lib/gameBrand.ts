@@ -6,6 +6,7 @@ export const GAME_BRAND = {
   tagline: 'Construis une ville isometrique vivante, quartier par quartier.',
   description:
     'Un city-builder isometrique a customiser autour des transports, des services publics, de la croissance urbaine et de la gestion des quartiers.',
+  defaultSeedPath: '/example-states/antananarivo_osm_state.json',
   forkRepoUrl: 'https://github.com/Njakasoa/isometric-city',
   upstreamRepoUrl: 'https://github.com/amilich/isometric-city',
 };
